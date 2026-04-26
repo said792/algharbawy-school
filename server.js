@@ -6,6 +6,9 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
 
 const app = express();
 app.use(cors());
@@ -3538,12 +3541,13 @@ app.post('/api/savePracticalSubjects', async (req, res) => {
 });
 // إضافة هذا الجزء في ملف السيرفر (مثلاً server.js أو app.js)
 
-// 1. جلب جدول الحصص
+// ==========================================================
+// 🔹 API جديد لجلب الحصص (للجرس المدرسي)
+// ==========================================================
 app.get('/api/periods', async (req, res) => {
     try {
         const request = new sql.Request();
-        
-        // جلب الحصص مرتبة حسب وقت البدء
+        // جلب الحصص من الجدول Periods
         // تأكد من أن اسم الجدول في قاعدة البيانات هو [Periods]
         const result = await request.query('SELECT * FROM [dbo].[Periods] ORDER BY StartTime ASC');
         
@@ -3553,7 +3557,7 @@ app.get('/api/periods', async (req, res) => {
                 data: result.recordset
             });
         } else {
-            res.status(404).json({ success: false, message: "لا توجد حصص مسجلة" });
+            res.status(404).json({ success: false, message: "لا توجد حصص مسجلة في الجدول" });
         }
     } catch (err) {
         console.error("Error fetching periods:", err);
@@ -3564,6 +3568,7 @@ app.get('/api/periods', async (req, res) => {
         });
     }
 });
+
 // ==========================================================
 // 🔹 تشغيل السيرفر (تم التصحيح للعمل على الشبكة)
 // ==========================================================
