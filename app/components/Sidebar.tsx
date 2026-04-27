@@ -176,6 +176,7 @@ export default function Sidebar() {
               <MenuLink href="/system/hikal-dirasaa/class" icon="fa-chalkboard">الفصول</MenuLink>
               <MenuLink href="/system/hikal-dirasaa/subject" icon="fa-book">المواد</MenuLink>
                 <MenuLink href="/system/bell" icon="fa-book">الجرس المدرسى</MenuLink>
+               <MenuLink href="/system/monitor" icon="fa-book">الجرس المدرسى1</MenuLink>
             </SubMenuSection>
 
             <SubMenuSection title="المؤهلات والوظائف" icon="fa-briefcase">

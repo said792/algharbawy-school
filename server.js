@@ -6,9 +6,6 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const app = express();
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
 
 const app = express();
 app.use(cors());
@@ -3539,36 +3536,106 @@ app.post('/api/savePracticalSubjects', async (req, res) => {
         res.status(500).json({ success: false, message: err.message });
     }
 });
-// إضافة هذا الجزء في ملف السيرفر (مثلاً server.js أو app.js)
-
-// ==========================================================
-// 🔹 API جديد لجلب الحصص (للجرس المدرسي)
-// ==========================================================
-app.get('/api/periods', async (req, res) => {
+// ============================
+// API للفحص: جلب البيانات بغض النظر عن رقم المدرسة
+// ============================
+app.get('/api/bell/debug', async (req, res) => {
     try {
         const request = new sql.Request();
-        // جلب الحصص من الجدول Periods
-        // تأكد من أن اسم الجدول في قاعدة البيانات هو [Periods]
-        const result = await request.query('SELECT * FROM [dbo].[Periods] ORDER BY StartTime ASC');
         
-        if (result.recordset && result.recordset.length > 0) {
-            res.status(200).json({
-                success: true,
-                data: result.recordset
-            });
-        } else {
-            res.status(404).json({ success: false, message: "لا توجد حصص مسجلة في الجدول" });
-        }
-    } catch (err) {
-        console.error("Error fetching periods:", err);
-        res.status(500).json({ 
-            success: false, 
-            message: "Internal Server Error", 
-            error: err.message 
+        // 1. التحقق من عدد الحصص
+        const periodsCount = await request.query('SELECT COUNT(*) as count FROM Periods');
+        console.log("عدد الحصص:", periodsCount.recordset[0].count);
+
+        // 2. التحقق من عدد الأصوات
+        const soundsCount = await request.query('SELECT COUNT(*) as count FROM BellSettings');
+        console.log("عدد الأصوات:", soundsCount.recordset[0].count);
+
+        // 3. جلب البيانات مع الـ Join (بدون شرط SchoolID)
+        // إذا لم يرجع شيئاً، فهذا يعني أن جدول Periods فارغ
+        const result = await request.query(`
+            SELECT 
+                BS.PeriodID,
+                BS.SoundURL,
+                P.PeriodName,
+                P.StartTime,
+                P.EndTime
+            FROM BellSettings BS
+            INNER JOIN Periods P ON BS.PeriodID = P.PeriodID
+            ORDER BY P.StartTime
+        `);
+
+        console.log("النتيجة:", result.recordset);
+
+        res.json({ 
+            success: true, 
+            periodsCount: periodsCount.recordset[0].count,
+            soundsCount: soundsCount.recordset[0].count,
+            data: result.recordset 
         });
+    } catch (err) {
+        console.error('Debug Error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+// ============================
+// 1. API لإدارة الأصوات (إضافة - تعديل - حذف)
+// يستخدم الإجراء المخزن INSER_UPDAT_DELETTAB_BellSounds
+// ============================
+app.post('/api/bell/manage', upload.single('sound'), async (req, res) => {
+    const { schoolId, periodId, operation } = req.body;
+    const file = req.file;
+
+    if (!schoolId || !periodId || !operation) {
+        return res.status(400).json({ success: false, message: 'بيانات ناقصة (المدرسة، الحصة، العملية)' });
+    }
+
+    try {
+        const request = new sql.Request();
+
+        // رابط الملف المرفوع
+        const fileUrl = file ? `/uploads/${file.filename}` : null;
+
+        // تمرير المتغيرات للإجراء المخزن
+        request.input('SchoolID', sql.Int, schoolId);
+        request.input('PeriodID', sql.Int, periodId);
+        request.input('SoundURL', sql.NVarChar(500), fileUrl);
+        request.input('INPOT', sql.Int, operation); // 1=Add, 2=Edit, 3=Delete
+
+        // تنفيذ الإجراء المخزن
+        await request.execute('INSER_UPDAT_DELETTAB_BellSounds');
+
+        res.json({ success: true, message: 'تمت العملية بنجاح', url: fileUrl });
+
+    } catch (err) {
+        console.error('خطأ في إدارة الأصوات:', err);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
+// ============================
+// 2. API لعرض الأصوات (Join مع جدول الحصص)
+// يستخدم الإجراء المخزن GetBellSoundSettings
+// ============================
+app.get('/api/bell/sounds', async (req, res) => {
+    const { schoolId } = req.query;
+
+    if (!schoolId) {
+        return res.status(400).json({ success: false, message: 'رقم المدرسة مطلوب' });
+    }
+
+    try {
+        const request = new sql.Request();
+        request.input('SchoolID', sql.Int, schoolId);
+
+        const result = await request.execute('GetBellSoundSettings');
+        
+        res.json({ success: true, data: result.recordset });
+    } catch (err) {
+        console.error('خطأ في جلب الأصوات:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 // ==========================================================
 // 🔹 تشغيل السيرفر (تم التصحيح للعمل على الشبكة)
 // ==========================================================
