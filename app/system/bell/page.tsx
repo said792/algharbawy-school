@@ -2,21 +2,95 @@
 
 import React, { useState, useEffect } from 'react';
 import { API_URL } from '@/lib/config';
+import { useAuthStore } from '@/store/authStore'; 
 
 export default function BellSettings() {
+  const user = useAuthStore((state) => state.user);
+  const schoolId = user?.schoolId;
+
   const [periods, setPeriods] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [schoolId, setSchoolId] = useState<string | null>(null);
 
-  // 1. جلب SchoolID عند التحميل
+  // 1. دالة جلب الحصص (محسنة لمنع الخطأ)
+  const fetchPeriods = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/getData/78`);
+      
+      // التحقق أن الرد نجح قبل تحليله
+      if (!res.ok) {
+        console.error("Failed to fetch periods:", res.status);
+        return;
+      }
+
+      const data = await res.json();
+
+      if (data.data && Array.isArray(data.data)) {
+        const mappedData = data.data.map((item: any) => ({
+          PeriodID: item["الرقم"],
+          PeriodName: item["الحصة"],
+          StartTime: item["بداية الحصة"],
+          EndTime: item["نهاية الحصة"],
+          SoundURL: null
+        }));
+        setPeriods(mappedData);
+      }
+    } catch (err) {
+      console.error("خطأ في جلب الحصص:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 2. دالة جلب الأصوات (المكان الأكثر احتمالاً للخطأ)
+  const fetchBellSettings = async (id: number | undefined) => {
+    if (!id) return;
+    try {
+      const res = await fetch(`${API_URL}/api/bell/sounds?schoolId=${id}`);
+
+      // ✅ التحقق: إذا لم يكن الرد نجاحاً (200)، نوقف ونطبع الخطأ
+      if (!res.ok) {
+        console.warn(`فشل جلب الأصوات - كود الخطأ: ${res.status}`);
+        // لا نستمر في تحليل JSON إذا كان الكود ليس 200
+        return; 
+      }
+
+      // محاولة تحليل الـ JSON، وإذا فشل (لأن السيرفر رجع HTML) سيتم التقاطه في الـ catch
+      const bellData = await res.json();
+
+      if (bellData.success && bellData.data) {
+        setPeriods((prevPeriods) =>
+          prevPeriods.map((p) => {
+            const soundInfo = bellData.data.find((b: any) => b.PeriodID === p.PeriodID);
+            return {
+              ...p,
+              SoundURL: soundInfo ? soundInfo.SoundURL : null
+            };
+          })
+        );
+      }
+    } catch (e) {
+      console.warn("فشل جلب الأصوات (ربما الـ API غير موجود):", e);
+      // ✅ إضافي: قراءة الرد كنص لطباعته في الـ Console إذا كان HTML
+      // (هذا يساعدك في معرفة هل هو 404 أم 500)
+      // fetch(`${API_URL}/api/bell/sounds?schoolId=${id}`).then(r => r.text()).then(text => console.log("Server Response:", text));
+    }
+  };
+
+  // 3. عند تحميل الصفحة
   useEffect(() => {
-    const id = localStorage.getItem('schoolId');
-    setSchoolId(id);
-  }, []);
+    fetchPeriods();
+    if (schoolId) {
+      fetchBellSettings(schoolId);
+    }
+  }, [schoolId]);
 
-  // 2. دالة رفع الصوت
+  // 4. دالة رفع الصوت
   const handleUpload = async (periodId: number, file: File) => {
-    if (!schoolId) return alert('يرجى تسجيل الدخول أولاً');
+    if (!schoolId) {
+      alert('يرجى تسجيل الدخول واختيار المدرسة أولاً');
+      return;
+    }
 
     const formData = new FormData();
     formData.append('sound', file);
@@ -28,218 +102,165 @@ export default function BellSettings() {
         method: 'POST',
         body: formData
       });
-      const result = await res.json();
+      
+      // التحقق هنا أيضاً
+      if (!res.ok) {
+        alert('فشل الاتصال بالسيرفر: ' + res.status);
+        return;
+      }
 
+      const result = await res.json();
+      
       if (result.success) {
         alert('تم الحفظ بنجاح');
-        fetchSounds();
+        fetchBellSettings(schoolId);
       } else {
-        alert('فشل الحفظ');
+        alert('فشل الرفع: ' + (result.message || 'حدث خطأ'));
       }
     } catch (err) {
       console.error(err);
-      alert('حدث خطأ في الاتصال');
+      alert('حدث خطأ أثناء الاتصال');
     }
   };
 
-  // 3. دالة حذف الصوت
-  const handleRemoveSound = async (periodId: number) => {
-    if (!confirm('هل أنت متأكد من حذف هذا الصوت؟')) return;
+  // Styles
+  const tdStyle = "py-3 text-center border-b border-gray-700";
+  const deleteBtn = "px-3 py-2 rounded-lg border border-transparent hover:bg-red-100 text-red-600 hover:bg-red-200 cursor-pointer";
+  const uploadBtn = "px-3 py-2 rounded-lg border border-transparent bg-orange-500 hover:bg-orange-600 text-white cursor-pointer";
 
-    try {
-      const res = await fetch(`${API_URL}/api/bell/manage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          schoolId: schoolId,
-          periodId: periodId,
-          operation: 3 // حذف
-        })
-      });
-      const result = await res.json();
-
-      if (result.success) {
-        alert('تم الحذف');
-        fetchSounds();
-      } else {
-        alert('فشل الحذف');
-      }
-    } catch (err) {
-      console.error(err);
-      alert('حدث خطأ');
-    }
-  };
-
-  // 4. دالة جلب البيانات
-  const fetchSounds = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_URL}/api/bell/sounds?schoolId=${schoolId}`);
-      const data = await res.json();
-
-      if (data.success) {
-        setPeriods(data.data);
-      }
-    } catch (err) {
-      console.error(err);
-      alert('فشل تحميل البيانات');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (schoolId) fetchSounds();
-  }, [schoolId]);
-
-  // --- الأنماط (Styles) ---
-  const headerStyle: React.CSSProperties = {
-    background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
-    borderRadius: 16,
-    padding: 24,
-    marginBottom: 24,
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center'
-  };
-
-  const cardStyle: React.CSSProperties = {
-    background: 'white',
-    borderRadius: 16,
-    padding: 20,
-    boxShadow: '0 4px 20px rgba(0,0,0,0.08)'
-  };
-
-  const tdStyle: React.CSSProperties = {
-    padding: 16,
-    borderBottom: '1px solid #e5e7eb',
-    textAlign: 'center'
-  };
-
-  const thStyle: React.CSSProperties = {
-    padding: 16,
-    borderBottom: '1px solid #e5e7eb',
-    textAlign: 'center',
-    background: '#f8fafc'
-  };
-
-  const btnStyle: React.CSSProperties = {
-    padding: '8px 16px',
-    borderRadius: 8,
-    border: 'none',
-    cursor: 'pointer',
-    fontWeight: 600,
-    fontSize: '14px',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px'
-  };
-
-  const uploadBtnStyle: React.CSSProperties = {
-    ...btnStyle,
-    background: '#e0f2fe',
-    color: '#0369a1'
-  };
-
-  const removeBtnStyle: React.CSSProperties = {
-    ...btnStyle,
-    background: '#fef2f2',
-    color: '#dc2626'
-  };
-
-  const playBtnStyle: React.CSSProperties = {
-    ...btnStyle,
-    background: '#dcfce7',
-    color: '#15803d'
-  };
+  const formatTime = (t: string) => t?.substring(0, 5);
 
   return (
-    <div style={{ padding: '20px', direction: 'rtl' }}>
-      {/* Header */}
-      <div style={headerStyle}>
-        <div>
-          <h2 style={{ color: 'white', margin: 0 }}>إعدادات الأجراس</h2>
-          <p style={{ color: 'rgba(255,255,255,0.8)', margin: 0 }}>
-            تحديد أصوات مخصصة لكل حصة
-          </p>
+    <div className="p-10 flex flex-col items-center bg-gray-50 min-h-screen">
+      <div className="w-full max-w-4xl">
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h1 className="text-3xl font-black text-gray-800">إعدادات الأجراس</h1>
+            <p className="text-gray-500">
+              {loading ? 'جاري تحميل البيانات...' : `إدارة أصوات الحصص - ${user?.schoolName || 'المدرسة'}`}
+            </p>
+          </div>
+          {schoolId && (
+            <button 
+              className="bg-blue-500 text-white px-4 py-2 rounded-full hover:bg-blue-600 transition shadow"
+              onClick={() => {
+                alert('جاري التحميل من الـ API الصوت المخصص...');
+              }}
+            >
+              🔊 جرب الآن
+            </button>
+          )}
         </div>
-      </div>
 
-      {/* Table Card */}
-      <div style={cardStyle}>
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: 40 }}>جاري التحميل...</div>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th style={thStyle}>الحصة</th>
-                <th style={thStyle}>الوقت</th>
-                <th style={thStyle}>الصوت</th>
-                <th style={thStyle}>أدوات</th>
-              </tr>
-            </thead>
-            <tbody>
-              {periods.map((p) => (
-                <tr key={p.PeriodID}>
-                  <td style={{...tdStyle, fontWeight: 'bold'}}>{p.PeriodName}</td>
-                  <td style={tdStyle}>
-                    {p.StartTime?.substring(0,5)} - {p.EndTime?.substring(0,5)}
-                  </td>
-                  <td style={tdStyle}>
-                    {p.SoundURL ? (
-                      <span style={{ color: 'green', fontWeight: 'bold', fontSize: '12px', padding: '4px 8px', background: '#dcfce7', borderRadius: '4px' }}>✅ صوت مخصص</span>
-                    ) : (
-                      <span style={{ color: 'gray', fontSize: '12px' }}>الجرس الافتراضي</span>
-                    )}
-                  </td>
-                  <td style={tdStyle}>
-                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                      
-                      {/* زر التجربة */}
-                      {p.SoundURL && (
-                        <button 
-                          style={playBtnStyle}
-                          onClick={() => new Audio(`${API_URL}${p.SoundURL}`).play()}
-                          title="تجربة الصوت"
-                        >
-                          🔊
-                        </button>
-                      )}
+        {!schoolId && (
+          <div className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 mb-6 rounded" role="alert">
+            <p className="font-bold">تنبيه</p>
+            <p>يرجى تسجيل الدخول واختيار مدرسة لتتمكن من رفع الأصوات.</p>
+          </div>
+        )}
 
-                      {/* زر الرفع */}
-                      <label style={uploadBtnStyle}>
-                        {p.SoundURL ? 'تغيير' : 'إضافة'}
-                        <input 
-                          type="file" 
-                          accept="audio/*"
-                          style={{ display: 'none' }} 
-                          onChange={(e) => {
-                            if (e.target.files && e.target.files[0]) {
-                              const op = p.SoundURL ? 2 : 1; // 2 تعديل، 1 إضافة
-                              handleUpload(p.PeriodID, e.target.files[0]);
-                            }
-                          }}
-                        />
-                      </label>
-
-                      {/* زر الحذف */}
-                      {p.SoundURL && (
-                        <button 
-                          style={removeBtnStyle}
-                          onClick={() => handleRemoveSound(p.PeriodID)}
-                          title="حذف الصوت المخصص"
-                        >
-                          🗑️
-                        </button>
-                      )}
-                    </div>
-                  </td>
+        <div className="w-full bg-white rounded-xl shadow-lg overflow-hidden border border-gray-200">
+          {loading ? (
+            <div className="text-center py-20 text-gray-500">جاري التحميل...</div>
+          ) : (
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-gray-100 border-b border-gray-300">
+                  <th className="py-3 text-right font-bold text-gray-700 px-4">الحصة</th>
+                  <th className="py-3 text-right font-bold text-gray-700 px-4">الوقت</th>
+                  <th className="py-3 text-right font-bold text-gray-700 px-4">الحالة</th>
+                  <th className="py-3 text-center font-bold text-gray-700 px-4">أدوات</th>
                 </tr>
-              ))}
+              </thead>
+              <tbody>
+                {periods.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="py-12 text-center text-gray-500">
+                      لا توجد بيانات
+                    </td>
+                  </tr>
+                ) : (
+                  periods.map((p) => (
+                    <tr key={p.PeriodID} className="hover:bg-gray-50 transition">
+                      <td className={tdStyle}>{p.PeriodName}</td>
+                      <td className={tdStyle}>
+                        <span className="bg-gray-100 px-2 py-1 rounded text-sm text-gray-600">
+                          {formatTime(p.StartTime)} - {formatTime(p.EndTime)}
+                        </span>
+                      </td>
+                      <td className={tdStyle}>
+                        {p.SoundURL ? (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            ✅ صوت مخصص
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                            الافتراضي
+                          </span>
+                        )}
+                      </td>
+                      <td className={tdStyle}>
+                        <div className="flex gap-2 justify-center items-center">
+                          
+                          {p.SoundURL && (
+                            <button 
+                              onClick={() => new Audio(`${API_URL}${p.SoundURL}`).play().catch(e => console.log(e))}
+                              className="text-blue-500 hover:text-blue-700 p-2"
+                              title="تجربة الصوت"
+                            >
+                              🔊
+                            </button>
+                          )}
+
+                          <label className={uploadBtn}>
+                            {p.SoundURL ? 'تغيير' : 'إضافة'}
+                            <input 
+                              type="file"
+                              accept="audio/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                if (e.target.files && e.target.files[0]) {
+                                  handleUpload(p.PeriodID, e.target.files[0]);
+                                }
+                              }}
+                            />
+                          </label>
+
+                          {p.SoundURL && (
+                             <button
+                                onClick={() => {
+                                  if (confirm('هل أنت متأكد من حذف هذا الصوت؟')) {
+                                    const formData = new FormData();
+                                    formData.append('schoolId', String(schoolId));
+                                    formData.append('periodId', String(p.PeriodID));
+                                    formData.append('operation', '3');
+                                    
+                                    fetch(`${API_URL}/api/bell/manage`, {
+                                      method: 'POST',
+                                      body: formData
+                                    })
+                                    .then((r: any) => r.json())
+                                    .then((res: any) => {
+                                        if (res.success) fetchBellSettings(schoolId!); 
+                                        else alert('فشل الحذف'); 
+                                      });
+                                  }
+                                }}
+                                className={deleteBtn}
+                                title="حذف الصوت"
+                             >
+                               🗑️
+                             </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
             </tbody>
           </table>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );
